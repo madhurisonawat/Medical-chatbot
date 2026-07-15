@@ -1,5 +1,6 @@
 from flask import Flask, render_template, jsonify, request
 from src.helper import download_embeddings
+from pinecone import Pinecone
 from langchain_pinecone import PineconeVectorStore
 from langchain_groq import ChatGroq
 from langchain_classic.chains import create_retrieval_chain
@@ -11,7 +12,9 @@ from dotenv import load_dotenv
 from src.prompt import *
 import os
 
-import os
+
+
+load_dotenv() 
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -19,7 +22,6 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 app = Flask(__name__)
 
 
-load_dotenv()
 rag_chain = None
 
 def get_rag_chain():
