@@ -16,39 +16,46 @@ app = Flask(__name__)
 
 
 load_dotenv()
+rag_chain = None
 
+def get_rag_chain():
+    global rag_chain
 
-embeddings = download_embeddings()
+    if rag_chain is None:
+        embeddings = download_embeddings()
 
-index_name = "medical-chatbot" 
-# Embed each chunk and upsert the embeddings into your Pinecone index.
-docsearch = PineconeVectorStore.from_existing_index(
-    index_name=index_name,
-    embedding=embeddings
-)
+        docsearch = PineconeVectorStore.from_existing_index(
+            index_name="medical-chatbot",
+            embedding=embeddings
+        )
 
+        retriever = docsearch.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k":3}
+        )
 
+        llm = ChatGroq(
+            model="qwen/qwen3-32b",
+            reasoning_effort="none"
+        )
 
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human","{input}")
+        ])
 
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
+        qa = create_stuff_documents_chain(llm,prompt)
 
-chatModel = ChatGroq(model="qwen/qwen3-32b", reasoning_effort="none")
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]
-)
+        rag_chain = create_retrieval_chain(retriever,qa)
 
-question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
-
+    return rag_chain
 
 
 @app.route("/")
 def index():
     return render_template('chat.html')
 
+chain = get_rag_chain()
 
 
 @app.route("/get", methods=["GET", "POST"])
@@ -56,7 +63,7 @@ def chat():
     msg = request.form["msg"]
     input = msg
     print(input)
-    response = rag_chain.invoke({"input": msg})
+    response = chain.invoke({"input": msg})
     print("Response : ", response["answer"])
     return str(response["answer"])
 
