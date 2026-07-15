@@ -1,10 +1,17 @@
 from flask import Flask
+from langchain_groq import ChatGroq
+import os
 
 app = Flask(__name__)
 
+llm = ChatGroq(
+    model="qwen/qwen3-32b",
+    reasoning_effort="none"
+)
+
 @app.route("/")
 def home():
-    return "Medical Chatbot is running!"
+    return "Groq Loaded Successfully!"
 
 if __name__ == "__main__":
     import os
