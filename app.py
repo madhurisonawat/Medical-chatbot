@@ -17,37 +17,49 @@ app = Flask(__name__)
 
 load_dotenv()
 
-PINECONE_API_KEY=os.environ.get('PINECONE_API_KEY')
-GROQ_API_KEY=os.environ.get('GROQ_API_KEY')
-
-os.environ["PINECONE_API_KEY"] = PINECONE_API_KEY
-os.environ["GROQ_API_KEY"] = GROQ_API_KEY
+rag_chain = None
 
 
-embeddings = download_embeddings()
+def get_rag_chain():
+    global rag_chain
 
-index_name = "medical-chatbot" 
-# Embed each chunk and upsert the embeddings into your Pinecone index.
-docsearch = PineconeVectorStore.from_existing_index(
-    index_name=index_name,
-    embedding=embeddings
-)
+    if rag_chain is None:
+        embeddings = download_embeddings()
 
+        docsearch = PineconeVectorStore.from_existing_index(
+            index_name="medical-chatbot",
+            embedding=embeddings
+        )
 
+        retriever = docsearch.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 3}
+        )
 
+        llm = ChatGroq(
+            model="qwen/qwen3-32b",
+            reasoning_effort="none"
+        )
 
-retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k":3})
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", system_prompt),
+                ("human", "{input}")
+            ]
+        )
 
-chatModel = ChatGroq(model="qwen/qwen3-32b", reasoning_effort="none")
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]
-)
+        qa_chain = create_stuff_documents_chain(
+            llm,
+            prompt
+        )
 
-question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
-rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+        rag_chain = create_retrieval_chain(
+            retriever,
+            qa_chain
+        )
+
+    return rag_chain
+
 
 
 
@@ -56,17 +68,18 @@ def index():
     return render_template('chat.html')
 
 
-
+chain = get_rag_chain()
 @app.route("/get", methods=["GET", "POST"])
 def chat():
     msg = request.form["msg"]
     input = msg
     print(input)
-    response = rag_chain.invoke({"input": msg})
+    response = chain.invoke({"input": msg})
     print("Response : ", response["answer"])
     return str(response["answer"])
 
 
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port= 8080, debug= True)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
