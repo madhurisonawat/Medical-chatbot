@@ -1,6 +1,7 @@
 from flask import Flask
 from langchain_groq import ChatGroq
 import os
+from src.helper import download_embeddings
 
 app = Flask(__name__)
 
@@ -9,6 +10,8 @@ llm = ChatGroq(
     reasoning_effort="none"
 )
 
+
+embeddings = download_embeddings()
 @app.route("/")
 def home():
     return "Groq Loaded Successfully!"
