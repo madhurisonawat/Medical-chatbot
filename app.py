@@ -12,52 +12,45 @@ from dotenv import load_dotenv
 from src.prompt import *
 import os
 
+# 1. Load variables immediately so they are ready for global initialization
 load_dotenv() 
+
+# 2. Bind the keys to os.environ right away so LangChain can see them at startup
+os.environ["PINECONE_API_KEY"] = os.getenv("PINECONE_API_KEY", "")
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY", "")
 
 app = Flask(__name__)
 
-rag_chain = None
+# 3. Define the chain initialization function
+def initialize_rag_chain():
+    embeddings = download_embeddings()
 
-def get_rag_chain():
-    global rag_chain
+    docsearch = PineconeVectorStore.from_existing_index(
+        index_name="medical-chatbot",
+        embedding=embeddings
+    )
 
-    if rag_chain is None:
-        # 1. Fetch the keys dynamically
-        pinecone_key = os.getenv("PINECONE_API_KEY")
-        groq_key = os.getenv("GROQ_API_KEY")
+    retriever = docsearch.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3}
+    )
 
-        # 2. Forcefully inject them into os.environ so LangChain/Pinecone absolutely see them
-        os.environ["PINECONE_API_KEY"] = pinecone_key
-        os.environ["GROQ_API_KEY"] = groq_key
+    llm = ChatGroq(
+        model="qwen/qwen3-32b",
+        reasoning_effort="none",
+        groq_api_key=os.environ["GROQ_API_KEY"]
+    )
 
-        embeddings = download_embeddings()
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}")
+    ])
 
-        # 3. Removed the invalid 'pinecone_api_key' keyword argument
-        docsearch = PineconeVectorStore.from_existing_index(
-            index_name="medical-chatbot",
-            embedding=embeddings
-        )
+    qa = create_stuff_documents_chain(llm, prompt)
+    return create_retrieval_chain(retriever, qa)
 
-        retriever = docsearch.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k":3}
-        )
-
-        llm = ChatGroq(
-            model="qwen/qwen3-32b",
-            reasoning_effort="none",
-            groq_api_key=groq_key # ChatGroq does accept this directly!
-        )
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human","{input}")
-        ])
-
-        qa = create_stuff_documents_chain(llm, prompt)
-        rag_chain = create_retrieval_chain(retriever, qa)
-
-    return rag_chain
+# 4. Initialize globally! The model will download when Railway boots up the app
+chain = initialize_rag_chain()
 
 
 @app.route("/")
@@ -68,14 +61,15 @@ def index():
 @app.route("/get", methods=["GET", "POST"])
 def chat():
     msg = request.form["msg"]
-    print(msg)
+    print("User Message:", msg)
     
-    chain = get_rag_chain()
-    
+    # 5. The chain is already loaded globally, so the response will be blazing fast
     response = chain.invoke({"input": msg})
     print("Response : ", response["answer"])
     return str(response["answer"])
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    # Dynamic port allocation for production environments
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=True)
