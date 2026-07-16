@@ -1,6 +1,6 @@
 from flask import Flask, render_template, jsonify, request
 from src.helper import download_embeddings
-from pinecone import Pinecone
+from pinecone import Pinecone  # <-- Imported the core client
 from langchain_pinecone import PineconeVectorStore
 from langchain_groq import ChatGroq
 from langchain_classic.chains import create_retrieval_chain
@@ -12,21 +12,26 @@ from dotenv import load_dotenv
 from src.prompt import *
 import os
 
-# 1. Load variables immediately so they are ready for global initialization
 load_dotenv() 
-
-# 2. Bind the keys to os.environ right away so LangChain can see them at startup
-os.environ["PINECONE_API_KEY"] = os.getenv("PINECONE_API_KEY", "")
-os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY", "")
 
 app = Flask(__name__)
 
-# 3. Define the chain initialization function
 def initialize_rag_chain():
+    # 1. Fetch keys safely
+    pinecone_key = os.getenv("PINECONE_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+    
     embeddings = download_embeddings()
 
-    docsearch = PineconeVectorStore.from_existing_index(
-        index_name="medical-chatbot",
+    # 2. Authenticate the Pinecone client manually
+    pc = Pinecone(api_key=pinecone_key)
+    
+    # 3. Connect to the index directly
+    index = pc.Index("medical-chatbot")
+
+    # 4. Pass the index object instead of 'index_name' to bypass Langchain's internal env checks
+    docsearch = PineconeVectorStore(
+        index=index,
         embedding=embeddings
     )
 
@@ -38,7 +43,7 @@ def initialize_rag_chain():
     llm = ChatGroq(
         model="qwen/qwen3-32b",
         reasoning_effort="none",
-        groq_api_key=os.environ["GROQ_API_KEY"]
+        groq_api_key=groq_key
     )
 
     prompt = ChatPromptTemplate.from_messages([
@@ -49,7 +54,7 @@ def initialize_rag_chain():
     qa = create_stuff_documents_chain(llm, prompt)
     return create_retrieval_chain(retriever, qa)
 
-# 4. Initialize globally! The model will download when Railway boots up the app
+# Initialize globally so it builds on startup
 chain = initialize_rag_chain()
 
 
@@ -63,13 +68,11 @@ def chat():
     msg = request.form["msg"]
     print("User Message:", msg)
     
-    # 5. The chain is already loaded globally, so the response will be blazing fast
     response = chain.invoke({"input": msg})
     print("Response : ", response["answer"])
     return str(response["answer"])
 
 
 if __name__ == '__main__':
-    # Dynamic port allocation for production environments
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=True)
