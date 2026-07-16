@@ -12,25 +12,33 @@ from dotenv import load_dotenv
 from src.prompt import *
 import os
 
-load_dotenv() 
+# Remove or comment out load_dotenv() to prevent it from messing with Railway's settings
+# load_dotenv() 
 
 app = Flask(__name__)
 
-# Keep this global, but initialized as None so the BUILD process passes successfully
 chain = None
 
 def get_rag_chain():
     global chain
     
-    # This block will ONLY run once, on the very first chat request
     if chain is None:
+        # DIAGNOSTIC PRINTS: These will show up in your Railway Console logs
+        print("--- DEBUGGING ENVIRONMENT VARIABLES ---")
+        print("All available keys in environment:", list(os.environ.keys()))
+        print("PINECONE_API_KEY value exists?:", os.getenv("PINECONE_API_KEY") is not None)
+        print("---------------------------------------")
+
         pinecone_key = os.getenv("PINECONE_API_KEY")
         groq_key = os.getenv("GROQ_API_KEY")
         
+        if not pinecone_key:
+            raise ValueError("CRITICAL ERROR: PINECONE_API_KEY is completely empty or missing from the environment!")
+
         embeddings = download_embeddings()
 
-        # Initialize Pinecone safely at RUNTIME
-        pc = Pinecone(api_key=pinecone_key)
+        # Initialize Pinecone safely
+        pc = Pinecone(api_key=pinecone_key.strip()) # .strip() removes accidental spaces
         index = pc.Index("medical-chatbot")
 
         docsearch = PineconeVectorStore(
@@ -46,7 +54,7 @@ def get_rag_chain():
         llm = ChatGroq(
             model="qwen/qwen3-32b",
             reasoning_effort="none",
-            groq_api_key=groq_key
+            groq_api_key=groq_key.strip() if groq_key else None
         )
 
         prompt = ChatPromptTemplate.from_messages([
@@ -67,17 +75,26 @@ def index():
 
 @app.route("/get", methods=["GET", "POST"])
 def chat():
-    msg = request.form["msg"]
+    if request.is_json:
+        data = request.get_json()
+        msg = data.get("msg", "")
+    else:
+        msg = request.form.get("msg", "")
+        
+    if not msg:
+        return "Error: Empty message received", 400
+        
     print("User Message:", msg)
     
-    # Safely fetches the active runtime chain
-    initialized_chain = get_rag_chain()
-    
-    response = initialized_chain.invoke({"input": msg})
-    print("Response : ", response["answer"])
-    return str(response["answer"])
+    try:
+        initialized_chain = get_rag_chain()
+        response = initialized_chain.invoke({"input": msg})
+        return str(response.get("answer", "I couldn't process an answer."))
+    except Exception as e:
+        print(f"Exception caught in /get route: {e}")
+        return f"Internal Server Error: {str(e)}", 500
 
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
